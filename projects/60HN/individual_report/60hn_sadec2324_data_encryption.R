@@ -1,4 +1,4 @@
-# Import libraries
+# Import lib
 library(RODBC)
 library(rlang)
 library(dplyr)
