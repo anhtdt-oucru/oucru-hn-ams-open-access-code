@@ -59,11 +59,13 @@ New contributors should be added to `CODEOWNERS` by the repository maintainer.
 
 ---
 
-## Code owners
+## Maintainers
 
-| GitHub handle | Role |
-|---|---|
-| [@anh-tdt](https://github.com/anh-tdt) | Repository maintainer |
+| GitHub handle | Role | Projects |
+|---|---|---|
+| [@anhtdt-oucru](https://github.com/anhtdt-oucru) | Repo admin | All (default owner) |
+| [@yendh-oucru](https://github.com/yendh-oucru) | Code owner | 60HN – Antibiogram |
+| [@tranglnh-oucru](https://github.com/tranglnh-oucru) | Code owner | 60HN – Individual Report |
 
 ---
 
