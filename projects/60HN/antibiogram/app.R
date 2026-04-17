@@ -3,6 +3,7 @@
 # V3 - Local Desktop Version
 # Native Save-As Browse Dialog + Focus Fix + Overwrite Guard
 # =========================
+renv::restore()
 
 suppressPackageStartupMessages({
   library(shiny)
@@ -14,8 +15,6 @@ suppressPackageStartupMessages({
   library(tibble)
   library(svDialogs)
 })
-
-renv::restore()
 
 # ---------- String normalization ----------
 normalize_key <- function(x) {
