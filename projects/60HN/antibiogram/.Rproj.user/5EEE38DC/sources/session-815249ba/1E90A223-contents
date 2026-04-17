@@ -11,7 +11,6 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(openxlsx)
   library(stringi)
-  library(writexl)
   library(tibble)
   library(svDialogs)
 })
@@ -28,7 +27,7 @@ normalize_key <- function(x) {
 # =========================
 ui <- fluidPage(
   titlePanel("Chuẩn hóa Danh mục Vi sinh vật (V3 Local Save-As)"),
-  
+
   tags$style(HTML("
     .drop-zone {
       border: 2px dashed #2c7be5;
@@ -97,12 +96,12 @@ ui <- fluidPage(
       color: #7a5000;
     }
   ")),
-  
+
   sidebarLayout(
     sidebarPanel(
-      
+
       h4("1) Nguồn dữ liệu"),
-      
+
       div(
         class = "drop-zone",
         onclick = "document.getElementById('raw_files').click()",
@@ -114,9 +113,9 @@ ui <- fluidPage(
         multiple = TRUE,
         accept = c(".xlsx")
       ),
-      
+
       br(),
-      
+
       div(
         class = "drop-zone",
         onclick = "document.getElementById('ref_file').click()",
@@ -128,61 +127,60 @@ ui <- fluidPage(
         multiple = FALSE,
         accept = c(".xlsx")
       ),
-      
+
       hr(),
-      
+
       h4("2) Kiểm tra"),
       actionButton(
         "check_missing",
         "Kiểm tra mã chưa chuẩn hóa",
         class = "btn-primary"
       ),
-      
+
       hr(),
-      
+
       h4("3) Áp dụng"),
       actionButton(
         "apply_updates",
         "Áp dụng cập nhật",
         class = "btn-success"
       ),
-      
+
       br(), br(),
-      
+
       h4("4) Lưu file"),
-      
-      # Warning notice before save button
+
       div(
         class = "notice-box",
         HTML("⚠️ <b>Lưu ý:</b> Chức năng <b>Lưu đè</b> sẽ <b>ghi đè</b> lên file Danh mục VSV gốc.
         Vui lòng chọn <b>đúng tên file gốc</b> để đảm bảo tính nhất quán.")
       ),
-      
+
       actionButton(
         "save_as_btn",
         "💾 Lưu đè file Danh mục VSV...",
         class = "btn-warning"
       ),
-      
+
       br(), br(),
       uiOutput("save_status")
     ),
-    
+
     mainPanel(
       h4("Tổng quan"),
       verbatimTextOutput("summary"),
-      
+
       hr(),
-      
+
       h4("Mã vi sinh vật cần chuẩn hóa"),
       div(
         class = "hint-box",
         "Điền Tên vi sinh vật, Loại vi sinh vật, Tên viết tắt."
       ),
       uiOutput("missing_folded_ui"),
-      
+
       hr(),
-      
+
       h4("Xem trước danh mục sau cập nhật"),
       DTOutput("ref_preview")
     )
@@ -193,24 +191,32 @@ ui <- fluidPage(
 # SERVER
 # =========================
 server <- function(input, output, session) {
-  
+
   missing_editable <- reactiveVal(NULL)
   updated_ref      <- reactiveVal(NULL)
   save_message     <- reactiveVal("")
-  
+
   # ---------- REF ----------
   ref_df <- reactive({
     req(input$ref_file)
-    
-    df <- read_excel(input$ref_file$datapath)
-    
+
+    df <- tryCatch(
+      openxlsx::read.xlsx(input$ref_file$datapath),
+      error = function(e) NULL
+    )
+
+    validate(need(!is.null(df), "Không đọc được file Danh mục VSV."))
+
+    # Normalize column names (trim whitespace + invisible chars)
+    names(df) <- stringi::stri_trim_both(names(df))
+
     validate(
-      need("ma_hoa"      %in% names(df), "Thiếu cột ma_hoa"),
-      need("ten_vsv"     %in% names(df), "Thiếu cột ten_vsv"),
-      need("loai_vsv"    %in% names(df), "Thiếu cột loai_vsv"),
+      need("ma_hoa"       %in% names(df), "Thiếu cột ma_hoa"),
+      need("ten_vsv"      %in% names(df), "Thiếu cột ten_vsv"),
+      need("loai_vsv"     %in% names(df), "Thiếu cột loai_vsv"),
       need("ten_viet_tat" %in% names(df), "Thiếu cột ten_viet_tat")
     )
-    
+
     df %>%
       transmute(
         ma_hoa,
@@ -220,66 +226,83 @@ server <- function(input, output, session) {
         .key = normalize_key(ma_hoa)
       )
   })
-  
+
   # ---------- RAW ----------
   raw_df <- reactive({
     req(input$raw_files)
-    
+
     files <- input$raw_files$datapath
-    
+
     all_org <- lapply(files, function(f) {
+
+      # Auto-detect header row: scan first 20 rows for one containing "Organism"
+      header_row <- tryCatch({
+        probe <- openxlsx::read.xlsx(f, colNames = FALSE, rows = 1:20)
+        hit <- which(
+          apply(probe, 1, function(r) {
+            any(stringi::stri_trim_both(as.character(r)) == "Organism")
+          })
+        )
+        if (length(hit) == 0) return(NULL)
+        hit[1]
+      }, error = function(e) return(NULL))
+
+      if (is.null(header_row)) return(NULL)
+
       df <- tryCatch(
-        read_excel(f, skip = 7),
+        openxlsx::read.xlsx(f, startRow = header_row),
         error = function(e) return(NULL)
       )
-      
+
       if (is.null(df)) return(NULL)
-      
-      names(df) <- trimws(names(df))
+
+      # Normalize column names
+      names(df) <- stringi::stri_trim_both(names(df))
+
       if (!"Organism" %in% names(df)) return(NULL)
-      
+
       df %>%
         transmute(ma_hoa = as.character(Organism))
     })
-    
+
     all_org <- all_org[!sapply(all_org, is.null)]
-    
+
     validate(
       need(length(all_org) > 0, "Không file nào có cột Organism")
     )
-    
+
     bind_rows(all_org) %>%
       filter(!is.na(ma_hoa) & trimws(ma_hoa) != "") %>%
       distinct() %>%
       mutate(.key = normalize_key(ma_hoa))
   })
-  
+
   # ---------- Summary ----------
   output$summary <- renderText({
     joined <- raw_df() %>%
       left_join(ref_df(), by = ".key")
-    
+
     total <- nrow(joined)
-    
+
     done <- sum(
       !is.na(joined$ten_vsv)      & trimws(joined$ten_vsv)      != "" &
         !is.na(joined$loai_vsv)     & trimws(joined$loai_vsv)     != "" &
         !is.na(joined$ten_viet_tat) & trimws(joined$ten_viet_tat) != ""
     )
-    
+
     paste0(
       "Tổng số mã vi sinh vật: ", total, "\n",
       "Đã chuẩn hóa đầy đủ: ", done, "\n",
       "Chưa chuẩn hóa / thiếu thông tin: ", total - done
     )
   })
-  
+
   # ---------- Check Missing ----------
   observeEvent(input$check_missing, {
     joined <- raw_df() %>%
       select(ma_hoa_raw = ma_hoa, .key) %>%
       left_join(ref_df(), by = ".key")
-    
+
     miss <- joined %>%
       filter(
         is.na(ten_vsv)      | trimws(ten_vsv)      == "" |
@@ -293,16 +316,16 @@ server <- function(input, output, session) {
         ten_viet_tat = ifelse(is.na(ten_viet_tat), "", ten_viet_tat)
       ) %>%
       arrange(ma_hoa)
-    
+
     missing_editable(miss)
     updated_ref(NULL)
   })
-  
+
   # ---------- Missing UI ----------
   output$missing_folded_ui <- renderUI({
     df <- missing_editable()
     if (is.null(df)) return(NULL)
-    
+
     tags$details(
       tags$summary(
         "Danh sách cần chuẩn hóa",
@@ -311,43 +334,50 @@ server <- function(input, output, session) {
       DTOutput("missing_tbl")
     )
   })
-  
+
   # ---------- Editable Table ----------
   output$missing_tbl <- renderDT({
     datatable(
       missing_editable(),
       rownames = FALSE,
       editable = list(target = "cell", disable = list(columns = 0)),
-      options  = list(dom = "t", paging = FALSE, scrollY = "45vh")
+      options  = list(
+        dom = "t",
+        paging = FALSE,
+        scrollY = "45vh",
+        language = list(
+          emptyTable = "Không có dữ liệu để hiển thị"
+        )
+      )
     )
   })
-  
+
   observeEvent(input$missing_tbl_cell_edit, {
     info <- input$missing_tbl_cell_edit
     df   <- missing_editable()
     df[info$row, info$col + 1] <- info$value
     missing_editable(df)
   })
-  
+
   # ---------- Apply Updates (core) ----------
   apply_updates_core <- function() {
     work <- updated_ref()
     if (is.null(work)) work <- ref_df()
-    
+
     miss <- missing_editable()
     if (is.null(miss)) return(work)
-    
+
     to_apply <- miss %>%
       filter(
         trimws(ten_vsv)      != "" |
           trimws(loai_vsv)     != "" |
           trimws(ten_viet_tat) != ""
       )
-    
+
     for (i in seq_len(nrow(to_apply))) {
       key <- normalize_key(to_apply$ma_hoa[i])
       idx <- which(work$.key == key)
-      
+
       if (length(idx) > 0) {
         work$ten_vsv[idx]      <- to_apply$ten_vsv[i]
         work$loai_vsv[idx]     <- to_apply$loai_vsv[i]
@@ -365,26 +395,25 @@ server <- function(input, output, session) {
         )
       }
     }
-    
+
     updated_ref(work)
     return(work)
   }
-  
+
   observeEvent(input$apply_updates, {
     apply_updates_core()
     save_message("Đã áp dụng cập nhật vào dữ liệu tạm.")
   })
-  
-  # ---------- SAVE AS (with focus fix + freeze debug + forced filename) ----------
-  # ---------- SAVE AS (PowerShell SaveFileDialog — works in .bat/browser launch) ----------
+
+  # ---------- SAVE AS (PowerShell SaveFileDialog) ----------
   observeEvent(input$save_as_btn, {
-    
+
     # --- Guard: ref file must be loaded ---
     if (is.null(input$ref_file)) {
       save_message("⚠️ Chưa chọn file Danh mục VSV. Vui lòng tải file trước khi lưu.")
       return()
     }
-    
+
     # --- Get data ---
     out <- tryCatch(
       apply_updates_core(),
@@ -393,14 +422,14 @@ server <- function(input, output, session) {
         return(NULL)
       }
     )
-    
+
     if (is.null(out)) {
       save_message("⚠️ Không có dữ liệu để lưu. Hãy tải file và áp dụng cập nhật trước.")
       return()
     }
-    
+
     ref_filename <- input$ref_file$name
-    
+
     # --- PowerShell SaveFileDialog (works in ALL launch modes) ---
     ps_script <- sprintf(
       "[System.Reflection.Assembly]::LoadWithPartialName('System.Windows.Forms') | Out-Null;
@@ -415,7 +444,7 @@ server <- function(input, output, session) {
       ref_filename,
       normalizePath(input$ref_file$datapath, winslash = "/")
     )
-    
+
     path <- tryCatch({
       result <- system2(
         "powershell",
@@ -423,24 +452,23 @@ server <- function(input, output, session) {
         stdout = TRUE,
         stderr = FALSE
       )
-      # Filter out blank lines / warnings
       result <- trimws(result[nchar(trimws(result)) > 0])
       if (length(result) == 0 || result[length(result)] == "") {
         NA_character_
       } else {
-        result[length(result)]   # last non-empty line = chosen path
+        result[length(result)]
       }
     }, error = function(e) {
       message("[DEBUG] PowerShell SaveFileDialog lỗi: ", e$message)
       NA_character_
     })
-    
+
     # --- User cancelled ---
     if (is.na(path) || trimws(path) == "") {
       save_message("ℹ️ Đã hủy: cửa sổ lưu file bị đóng mà không chọn đường dẫn.")
       return()
     }
-    
+
     # --- Warn if filename changed ---
     chosen_filename <- basename(path)
     if (!identical(chosen_filename, ref_filename)) {
@@ -451,13 +479,11 @@ server <- function(input, output, session) {
       ))
       return()
     }
-    
-    # --- Write file ---
+
+    # --- Write file using openxlsx ---
     tryCatch({
-      writexl::write_xlsx(
-        out %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat),
-        path
-      )
+      out_clean <- out %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat)
+      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE)
       save_message(paste0("✅ Đã lưu thành công: ", path))
       message("[DEBUG] Lưu file thành công tại: ", path)
     }, error = function(e) {
@@ -465,21 +491,21 @@ server <- function(input, output, session) {
       message("[DEBUG] Lỗi ghi file: ", e$message)
     })
   })
-  
+
   # ---------- Save Status ----------
   output$save_status <- renderUI({
     msg <- save_message()
     if (msg == "") return(NULL)
-    
+
     cls <- if (grepl("^✅", msg)) "status-ok" else "status-warn"
-    
+
     div(class = cls, msg)
   })
-  
+
   # ---------- Preview ----------
   output$ref_preview <- renderDT({
     req(updated_ref())
-    
+
     datatable(
       updated_ref() %>%
         select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat),
