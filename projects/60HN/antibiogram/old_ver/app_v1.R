@@ -1,6 +1,6 @@
-
 # =========================
-# Chuẩn hóa Danh mục Tên khoa
+# Chuẩn hóa Danh mục Vi sinh vật
+# Full version with Browse Upload Logic
 # =========================
 
 suppressPackageStartupMessages({
@@ -20,18 +20,26 @@ normalize_key <- function(x) {
   tolower(x)
 }
 
-# ---------- Paths ----------
-RAW_DIR <- "G:/Group Folders/ACADEMIC/Controlled documents/60HN - ASPARNet/7. DATA/ANTIBIOGRAM/DTH/3.du_lieu_whonet_phien_giai"
-
-REF_FILE <- "G:/Group Folders/ACADEMIC/Controlled documents/60HN - ASPARNet/7. DATA/ANTIBIOGRAM/DTH/1.danh_muc/DTH_danh_muc_khoa.xlsx"
-
 # =========================
 # UI
 # =========================
 ui <- fluidPage(
-  titlePanel("Chuẩn hóa Danh mục Tên khoa"),
+  titlePanel("Chuẩn hóa Danh mục Vi sinh vật"),
   
   tags$style(HTML("
+    .drop-zone {
+      border: 2px dashed #2c7be5;
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+      cursor: pointer;
+      background: #f8fbff;
+      margin-bottom: 10px;
+      font-weight: 600;
+    }
+    .drop-zone:hover {
+      background: #eef6ff;
+    }
     #missing_tbl table thead th:nth-child(2),
     #missing_tbl table thead th:nth-child(3),
     #missing_tbl table thead th:nth-child(4) {
@@ -66,54 +74,84 @@ ui <- fluidPage(
       border-radius: 10px;
       margin-left: 8px;
     }
-    details summary::-webkit-details-marker { display:none; }
+    details summary::-webkit-details-marker {
+      display:none;
+    }
   ")),
   
   sidebarLayout(
     sidebarPanel(
+      
       h4("1) Nguồn dữ liệu"),
-      p("Dữ liệu gốc: nhiều file WHONET (cột Location)"),
-      p("Danh mục chuẩn hóa: Danh mục Tên khoa"),
-      actionButton("reload_files", "Tải lại dữ liệu"),
+      
+      div(
+        class = "drop-zone",
+        onclick = "document.getElementById('raw_files').click()",
+        "📂 Chọn file WHONET (.xlsx)"
+      ),
+      fileInput(
+        "raw_files",
+        label = NULL,
+        multiple = TRUE,
+        accept = c(".xlsx")
+      ),
+      
+      br(),
+      
+      div(
+        class = "drop-zone",
+        onclick = "document.getElementById('ref_file').click()",
+        "📘 Chọn file Danh mục VSV"
+      ),
+      fileInput(
+        "ref_file",
+        label = NULL,
+        multiple = FALSE,
+        accept = c(".xlsx")
+      ),
+      
       hr(),
       
       h4("2) Kiểm tra"),
       actionButton(
         "check_missing",
-        "Kiểm tra Tên khoa chưa chuẩn hóa",
+        "Kiểm tra mã vi sinh vật chưa chuẩn hóa",
         class = "btn-primary"
       ),
+      
       hr(),
       
       h4("3) Áp dụng & Xuất"),
       actionButton(
         "apply_updates",
         "Áp dụng cập nhật",
-        class = "btn-success",
-        onclick = "document.activeElement && document.activeElement.blur();"
+        class = "btn-success"
       ),
+      
       br(), br(),
-      actionButton(
+      
+      downloadButton(
         "export_new",
-        "Ghi đè danh mục",
-        class = "btn-warning",
-        onclick = "document.activeElement && document.activeElement.blur();"
+        "Xuất danh mục cập nhật",
+        class = "btn-warning"
       )
     ),
     
     mainPanel(
       h4("Tổng quan"),
       verbatimTextOutput("summary"),
+      
       hr(),
       
-      h4("Tên khoa cần chuẩn hóa"),
+      h4("Mã vi sinh vật cần chuẩn hóa"),
       div(
         class = "hint-box",
-        "Điền Tên khoa và/hoặc Nhóm khoa. Có thể điền dần, không cần đủ mới áp dụng."
+        "Điền Tên vi sinh vật, Loại vi sinh vật, Tên viết tắt. Có thể điền dần, không cần đủ mới áp dụng."
       ),
       uiOutput("missing_folded_ui"),
       
       hr(),
+      
       h4("Xem trước danh mục sau cập nhật"),
       DTOutput("ref_preview")
     )
@@ -125,76 +163,61 @@ ui <- fluidPage(
 # =========================
 server <- function(input, output, session) {
   
-  # ---- reload trigger ----
-  files_version <- reactiveVal(Sys.time())
-  observeEvent(input$reload_files, {
-    files_version(Sys.time())
-  })
-  
-  # ---------- RAW ----------
-  raw_df <- reactive({
-    files_version()
-    
-    validate(
-      need(dir.exists(RAW_DIR), paste("Không tìm thấy thư mục:", RAW_DIR))
-    )
-    
-    files <- list.files(RAW_DIR, pattern="\\.xlsx$", full.names=TRUE)
-    validate(need(length(files) > 0, "Không có file Excel trong thư mục RAW"))
-    
-    all_org <- lapply(files, function(f) {
-      df <- readxl::read_excel(f, skip = 7)
-      
-      if (!"Location" %in% names(df)) return(NULL)
-      
-      df %>%
-        transmute(ma_hoa = as.character(Location))
-    })
-    
-    # loại NULL
-    all_org <- all_org[!sapply(all_org, is.null)]
-    
-    # nếu không file nào có Location
-    validate(
-      need(length(all_org) > 0, "Không file nào có cột Location")
-    )
-    
-    # bind và kiểm tra cột tồn tại
-    out <- bind_rows(all_org)
-    
-    validate(
-      need("ma_hoa" %in% names(out), "Không tạo được cột ma_hoa")
-    )
-    
-    out %>%
-      filter(!is.na(ma_hoa) & trimws(ma_hoa) != "") %>%
-      distinct() %>%
-      mutate(.key = normalize_key(ma_hoa))
-  })
-  
   # ---------- REF ----------
   ref_df <- reactive({
-    files_version()
+    req(input$ref_file)
     
-    validate(
-      need(file.exists(REF_FILE), paste("Không tìm thấy file:", REF_FILE))
-    )
-    
-    df <- readxl::read_excel(REF_FILE)
+    df <- readxl::read_excel(input$ref_file$datapath)
     
     validate(
       need("ma_hoa" %in% names(df), "Thiếu cột ma_hoa"),
-      need("ten_khoa" %in% names(df), "Thiếu cột ten_khoa"),
-      need("ten_khoa_nhom" %in% names(df), "Thiếu cột ten_khoa_nhom")
+      need("ten_vsv" %in% names(df), "Thiếu cột ten_vsv"),
+      need("loai_vsv" %in% names(df), "Thiếu cột loai_vsv"),
+      need("ten_viet_tat" %in% names(df), "Thiếu cột ten_viet_tat")
     )
     
     df %>%
       transmute(
         ma_hoa,
-        ten_khoa,
-        ten_khoa_nhom,
+        ten_vsv,
+        loai_vsv,
+        ten_viet_tat,
         .key = normalize_key(ma_hoa)
       )
+  })
+  
+  # ---------- RAW ----------
+  raw_df <- reactive({
+    req(input$raw_files)
+    
+    files <- input$raw_files$datapath
+    
+    all_org <- lapply(files, function(f) {
+      df <- tryCatch(
+        readxl::read_excel(f, skip = 7),
+        error = function(e) return(NULL)
+      )
+      
+      if (is.null(df)) return(NULL)
+      
+      names(df) <- trimws(names(df))
+      
+      if (!"Organism" %in% names(df)) return(NULL)
+      
+      df %>%
+        transmute(ma_hoa = as.character(Organism))
+    })
+    
+    all_org <- all_org[!sapply(all_org, is.null)]
+    
+    validate(
+      need(length(all_org) > 0, "Không file nào có cột Organism")
+    )
+    
+    bind_rows(all_org) %>%
+      filter(!is.na(ma_hoa) & trimws(ma_hoa) != "") %>%
+      distinct() %>%
+      mutate(.key = normalize_key(ma_hoa))
   })
   
   # ---------- State ----------
@@ -209,33 +232,36 @@ server <- function(input, output, session) {
     total <- nrow(joined)
     
     done <- sum(
-      !is.na(joined$ten_khoa) & trimws(joined$ten_khoa) != "" &
-        !is.na(joined$ten_khoa_nhom) & trimws(joined$ten_khoa_nhom) != "" 
+      !is.na(joined$ten_vsv) & trimws(joined$ten_vsv) != "" &
+        !is.na(joined$loai_vsv) & trimws(joined$loai_vsv) != "" &
+        !is.na(joined$ten_viet_tat) & trimws(joined$ten_viet_tat) != ""
     )
     
     paste0(
-      "Tổng số tên khoa: ", total, "\n",
+      "Tổng số mã vi sinh vật: ", total, "\n",
       "Đã chuẩn hóa đầy đủ: ", done, "\n",
       "Chưa chuẩn hóa / thiếu thông tin: ", total - done
     )
   })
   
-  # ---------- Check missing ----------
+  # ---------- Check Missing ----------
   observeEvent(input$check_missing, {
     
     joined <- raw_df() %>%
-      select(ma_hoa_raw = ma_hoa, .key) %>%   
+      select(ma_hoa_raw = ma_hoa, .key) %>%
       left_join(ref_df(), by = ".key")
     
     miss <- joined %>%
       filter(
-        is.na(ten_khoa) | trimws(ten_khoa) == "" |
-          is.na(ten_khoa_nhom) | trimws(ten_khoa_nhom) == "" 
+        is.na(ten_vsv) | trimws(ten_vsv) == "" |
+          is.na(loai_vsv) | trimws(loai_vsv) == "" |
+          is.na(ten_viet_tat) | trimws(ten_viet_tat) == ""
       ) %>%
       transmute(
-        ma_hoa = ma_hoa_raw,                  
-        ten_khoa = ifelse(is.na(ten_khoa), "", ten_khoa),
-        ten_khoa_nhom = ifelse(is.na(ten_khoa_nhom), "", ten_khoa_nhom)
+        ma_hoa = ma_hoa_raw,
+        ten_vsv = ifelse(is.na(ten_vsv), "", ten_vsv),
+        loai_vsv = ifelse(is.na(loai_vsv), "", loai_vsv),
+        ten_viet_tat = ifelse(is.na(ten_viet_tat), "", ten_viet_tat)
       ) %>%
       arrange(ma_hoa)
     
@@ -243,8 +269,7 @@ server <- function(input, output, session) {
     updated_ref(NULL)
   })
   
-  
-  # ---------- UI folded ----------
+  # ---------- Folded UI ----------
   output$missing_folded_ui <- renderUI({
     df <- missing_editable()
     if (is.null(df)) return(NULL)
@@ -258,7 +283,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # ---------- Editable table ----------
+  # ---------- Editable Table ----------
   output$missing_tbl <- renderDT({
     datatable(
       missing_editable(),
@@ -267,14 +292,10 @@ server <- function(input, output, session) {
       options = list(
         dom = "t",
         paging = FALSE,
-        scrollY = "45vh",
-        language = list(
-          emptyTable = "Không có dữ liệu để hiển thị"
-        )
+        scrollY = "45vh"
       )
     )
   })
-  
   
   observeEvent(input$missing_tbl_cell_edit, {
     info <- input$missing_tbl_cell_edit
@@ -283,7 +304,7 @@ server <- function(input, output, session) {
     missing_editable(df)
   })
   
-  # ---------- Apply updates ----------
+  # ---------- Apply Updates ----------
   apply_updates_core <- function() {
     work <- updated_ref()
     if (is.null(work)) work <- ref_df()
@@ -293,8 +314,9 @@ server <- function(input, output, session) {
     
     to_apply <- miss %>%
       filter(
-        trimws(ten_khoa) != "" |
-          trimws(ten_khoa_nhom) != "" 
+        trimws(ten_vsv) != "" |
+          trimws(loai_vsv) != "" |
+          trimws(ten_viet_tat) != ""
       )
     
     for (i in seq_len(nrow(to_apply))) {
@@ -302,15 +324,17 @@ server <- function(input, output, session) {
       idx <- which(work$.key == key)
       
       if (length(idx) > 0) {
-        work$ten_khoa[idx] <- to_apply$ten_khoa[i]
-        work$ten_khoa_nhom[idx] <- to_apply$ten_khoa_nhom[i]
-        } else {
+        work$ten_vsv[idx] <- to_apply$ten_vsv[i]
+        work$loai_vsv[idx] <- to_apply$loai_vsv[i]
+        work$ten_viet_tat[idx] <- to_apply$ten_viet_tat[i]
+      } else {
         work <- bind_rows(
           work,
           tibble(
             ma_hoa = to_apply$ma_hoa[i],
-            ten_khoa = to_apply$ten_khoa[i],
-            ten_khoa_nhom = to_apply$ten_khoa_nhom[i],
+            ten_vsv = to_apply$ten_vsv[i],
+            loai_vsv = to_apply$loai_vsv[i],
+            ten_viet_tat = to_apply$ten_viet_tat[i],
             .key = key
           )
         )
@@ -322,8 +346,9 @@ server <- function(input, output, session) {
     missing_editable(
       miss %>%
         filter(
-          trimws(ten_khoa) == "" |
-            trimws(ten_khoa_nhom) == "" 
+          trimws(ten_vsv) == "" |
+            trimws(loai_vsv) == "" |
+            trimws(ten_viet_tat) == ""
         )
     )
   }
@@ -333,34 +358,36 @@ server <- function(input, output, session) {
   })
   
   # ---------- Export ----------
-  observeEvent(input$export_new, {
-    apply_updates_core()
-    
-    out <- updated_ref()
-    if (is.null(out)) out <- ref_df()
-    
-    writexl::write_xlsx(
-      out %>% select(ma_hoa, ten_khoa, ten_khoa_nhom),
-      REF_FILE
-    )
-    
-    showModal(modalDialog(
-      title = "Hoàn tất",
-      paste("Đã ghi đè file:", REF_FILE),
-      easyClose = TRUE
-    ))
-  })
+  output$export_new <- downloadHandler(
+    filename = function() {
+      "DTH_danh_muc_vsv_updated.xlsx"
+    },
+    content = function(file) {
+      apply_updates_core()
+      
+      out <- updated_ref()
+      if (is.null(out)) out <- ref_df()
+      
+      writexl::write_xlsx(
+        out %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat),
+        file
+      )
+    }
+  )
   
   # ---------- Preview ----------
   output$ref_preview <- renderDT({
     req(updated_ref())
+    
     datatable(
       updated_ref() %>%
-        select(ma_hoa, ten_khoa, ten_khoa_nhom),
+        select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat),
       rownames = FALSE
     )
   })
 }
 
-shinyApp(ui, server)
-
+# =========================
+# RUN APP
+# =========================
+shinyApp(ui, server, options = list(launch.browser = TRUE))
