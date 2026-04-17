@@ -1,41 +1,39 @@
 ================================================================================
  Chuẩn hóa Danh mục Vi sinh vật (Antibiogram Organism Name Standardizer)
- Project: 60HN | Version: 3 (Local Desktop)
+ Dự án: 60HN 
 ================================================================================
+CHỨC NĂNG
+---------
+Ứng dụng Shiny chạy cục bộ, dùng để chuẩn hóa tên vi sinh vật trong các file
+Excel dựa trên danh mục tham chiếu (danh_muc_vsv.xlsx). Ứng dụng đánh dấu các
+tên không nhận dạng được, cho phép xem xét, chỉnh sửa và xuất dữ liệu đã làm sạch.
 
-WHAT IT DOES
-------------
-A local Shiny app that standardizes microbiology organism names in your Excel
-files against a reference catalogue (DTH_danh_muc_vsv.xlsx). It flags
-unrecognized names and lets you review, correct, and export the cleaned data.
+CÁCH CHẠY ỨNG DỤNG
+-------------------
+1. Đảm bảo đã cài R (>= 4.4.0): https://cran.r-project.org
+2. Nhấp đúp vào run_app.bat — tệp này sẽ tự động:
+   - Tìm Rscript tự động
+   - Khôi phục tất cả các thư viện (packages) cần thiết từ renv.lock
+     (chỉ lần đầu chạy, mất vài phút)
+   - Khởi chạy ứng dụng trên trình duyệt mặc định
 
-HOW TO RUN
-----------
-1. Make sure R (>= 4.4.0) is installed: https://cran.r-project.org
-2. Double-click run_app.bat — it will:
-   - Find Rscript automatically
-   - Restore all required packages from renv.lock (first run only, takes a few minutes)
-   - Launch the app in your default browser
+CẤU TRÚC TỆP
+-------------
+  app.R                  Ứng dụng Shiny chính
+  setup_and_run.R        Được gọi bởi run_app.bat — xử lý khôi phục renv + khởi chạy
+  run_app.bat            Trình khởi chạy bằng nhấp đúp (Windows)
+  renv.lock              Phiên bản của các thư viện (packages) đã ghim (không chỉnh sửa thủ công)
+  renv/                  Nội bộ renv (không chỉnh sửa thủ công)
 
-FILES
------
-  app.R                  Main Shiny application
-  setup_and_run.R        Called by run_app.bat — handles renv restore + app launch
-  run_app.bat            Double-click launcher (Windows)
-  renv.lock              Pinned package versions (do not edit manually)
-  renv/                  renv internals (do not edit manually)
-  DTH_danh_muc_vsv.xlsx  Reference catalogue of standardized organism names
-  output/                Folder for exported results
-
-REQUIREMENTS
-------------
-  - Windows OS
+YÊU CẦU HỆ THỐNG
+-----------------
+  - Hệ điều hành Windows
   - R >= 4.4.0
-  - Internet connection on first run (for package installation)
+  - Kết nối Internet ở lần chạy đầu tiên (để cài đặt gói)
 
-NOTES
------
-  - On first run, renv::restore() installs ~65 packages — this is normal.
-  - Subsequent runs skip restoration and launch immediately.
-  - Do not move app.R or renv.lock out of this folder.
+LƯU Ý
+------
+  - Ở lần chạy đầu, renv::restore() sẽ cài 60+ thư viện (packages), vui long đợi.
+  - Các lần chạy sau sẽ bỏ qua bước khôi phục và khởi chạy ngay.
+  - Không di chuyển app.R hoặc renv.lock ra khỏi thư mục này.
 ================================================================================
