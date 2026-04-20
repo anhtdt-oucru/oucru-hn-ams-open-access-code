@@ -1,5 +1,11 @@
 @echo off
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
+
+echo ================================================
+echo  Cong cu lam sach - iSharp AMS Launcher
+echo ================================================
+echo.
 echo Looking for Rscript...
 set RSCRIPT=
 
@@ -45,7 +51,7 @@ if defined RSCRIPT goto :verify
 for /d %%i in ("C:\Program Files\RStudio\resources\app\bin\quarto\bin\tools\*") do set RSCRIPT="%%i\Rscript.exe"
 if defined RSCRIPT goto :verify
 
-:: Method 8 - Scan user AppData (RStudio sometimes installs R here)
+:: Method 8 - Scan user AppData
 for /d %%i in ("%LOCALAPPDATA%\Programs\R\R-*") do set RSCRIPT="%%i\bin\Rscript.exe"
 if defined RSCRIPT goto :verify
 
@@ -70,7 +76,6 @@ pause
 exit /b 1
 
 :verify
-:: Verify the found path actually exists
 if not exist %RSCRIPT% (
     set RSCRIPT=
     echo Path not valid, continuing search...
@@ -80,17 +85,41 @@ if not exist %RSCRIPT% (
 :run
 echo Found: %RSCRIPT%
 echo.
-echo Checking packages...
-%RSCRIPT% -e ^
-  "pkgs <- c('shiny','DT','dplyr','readxl','stringi','writexl','tibble','svDialogs'); ^
-   missing <- pkgs[!pkgs %%in%% installed.packages()[,'Package']]; ^
-   if(length(missing)){ ^
-     message('Installing: ', paste(missing, collapse=', ')); ^
-     install.packages(missing, repos='https://cloud.r-project.org') ^
-   } else { message('All packages OK') }"
+
+:: Check if renv.lock exists
+if not exist "%~dp0renv.lock" (
+    echo ERROR: renv.lock not found in project folder.
+    echo Please make sure you cloned the full repository.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: Check if renv/activate.R exists
+if not exist "%~dp0renv\activate.R" (
+    echo ERROR: renv\activate.R not found.
+    echo Please make sure you cloned the full repository.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo Step 1/2 - Restoring packages from renv.lock...
+echo (First run may take several minutes - please wait)
+echo.
+%RSCRIPT% --vanilla -e "source('renv/activate.R'); renv::restore(prompt = FALSE)"
+if %ERRORLEVEL% neq 0 (
+    echo.
+    echo ERROR: Package restoration failed.
+    echo Check the output above, then re-run this script.
+    echo.
+    pause
+    exit /b 1
+)
 
 echo.
-echo Launching app...
+echo Step 2/2 - Launching Cong cu lam sach...
+echo.
 %RSCRIPT% -e "shiny::runApp('app.R', launch.browser = TRUE)"
 pause
 exit /b 0
