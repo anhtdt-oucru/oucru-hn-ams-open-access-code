@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # Mục đích : Phát hiện các mã chưa được chuẩn hóa trong ba danh mục tham chiếu
 #            (Vi sinh vật, Tên khoa, Tên bệnh phẩm), cho phép người dùng điền
-#            thông tin còn thiếu qua dropdown preset, rồi lưu đè file gốc.
+#            thông tin còn thiếu trực tiếp trên giao diện, rồi lưu đè file gốc.
 #
 # Gồm 3 tab:
 #   Tab 1 — Tên VSV      : cột bắt buộc ma_hoa | ten_vsv | loai_vsv | ten_viet_tat
@@ -12,37 +12,26 @@
 #
 # Quy trình mỗi tab:
 #   (1) Tải file WHONET gốc + file danh mục tham chiếu
-#   (2) Kiểm tra → hiển thị danh sách mã chưa chuẩn hóa
-#   (3) Chọn từ dropdown preset (hoặc "Không tìm thấy" → nhập tay) → Áp dụng
+#   (2) Kiểm tra → hiển thị danh sách mã chưa chuẩn hóa (bảng có thể sửa)
+#   (3) Sửa trực tiếp trên bảng → Áp dụng cập nhật
 #   (4) Lưu đè file danh mục gốc qua hộp thoại Save-As
-#
-# Thay đổi so với phiên bản cũ (step 3):
-#   - Thay bảng DT editable bằng giao diện dropdown + fallback nhập tay
-#   - Preset lấy từ file danh_muc.xlsx (3 sheets: ten_vsv, ten_khoa, ten_benh_pham)
-#   - Chọn tên VSV từ preset tự động điền loai_vsv và ten_viet_tat
-#   - Chọn "Không tìm thấy" mở ô nhập tay cho từng trường
 # =============================================================================
 
 suppressPackageStartupMessages({
-  library(shiny)     # framework giao diện web
-  library(dplyr)     # xử lý data frame
-  library(openxlsx)  # đọc / ghi file Excel
-  library(stringi)   # chuẩn hóa chuỗi (bỏ dấu, trim)
-  library(tibble)    # tạo tibble nhanh khi thêm dòng mới
-  library(here)      # đường dẫn tương đối so với thư mục gốc project
+  library(shiny)    # framework giao diện web
+  library(DT)       # bảng dữ liệu tương tác, hỗ trợ sửa trực tiếp (editable)
+  library(dplyr)    # xử lý data frame
+  library(openxlsx) # đọc / ghi file Excel
+  library(stringi)  # chuẩn hóa chuỗi (bỏ dấu, trim)
+  library(tibble)   # tạo tibble nhanh khi thêm dòng mới
 })
-
-# =============================================================================
-# HẰNG SỐ: Tùy chọn "Không tìm thấy" trong dropdown
-# =============================================================================
-
-NOT_FOUND_LABEL <- "— Không tìm thấy (nhập tay) —"
 
 # =============================================================================
 # HÀM TIỆN ÍCH DÙNG CHUNG
 # =============================================================================
 
 # Chuẩn hóa khóa so khớp: bỏ dấu tiếng Việt, viết thường, trim khoảng trắng
+# Đảm bảo so khớp chính xác dù người dùng nhập có dấu hay không
 normalize_key <- function(x) {
   x <- trimws(as.character(x))
   x <- stringi::stri_trans_general(x, "Latin-ASCII")
@@ -50,7 +39,10 @@ normalize_key <- function(x) {
 }
 
 # Mở hộp thoại Save-As của Windows thông qua PowerShell
+# Trả về đường dẫn đầy đủ được chọn, hoặc NA nếu người dùng bấm Cancel
 ps_save_dialog <- function(suggested_name, initial_path = NULL) {
+
+  # Thư mục mặc định: lấy từ đường dẫn file đã tải lên (nếu có)
   init_dir <- if (!is.null(initial_path) && nchar(initial_path) > 0) {
     normalizePath(dirname(initial_path), winslash = "/", mustWork = FALSE)
   } else {
@@ -92,21 +84,9 @@ detect_header_row <- function(path) {
   }, error = function(e) NULL)
 }
 
-# Đọc file preset danh_muc.xlsx, trả về list gồm 3 data frame
-load_preset <- function(path) {
-  tryCatch({
-    vsv <- openxlsx::read.xlsx(path, sheet = "ten_vsv")
-    khoa <- openxlsx::read.xlsx(path, sheet = "ten_khoa")
-    bp   <- openxlsx::read.xlsx(path, sheet = "ten_benh_pham")
-    list(vsv = vsv, khoa = khoa, bp = bp)
-  }, error = function(e) NULL)
-}
-
-# =============================================================================
-# CSS DÙNG CHUNG
-# =============================================================================
-
+# CSS dùng chung cho giao diện cả 3 tab
 app_css <- HTML("
+  /* Vùng nhấn để chọn file */
   .drop-zone {
     border: 2px dashed #2c7be5;
     border-radius: 8px;
@@ -120,6 +100,7 @@ app_css <- HTML("
   }
   .drop-zone:hover { background: #eef6ff; }
 
+  /* Hộp gợi ý màu xanh */
   .hint-box {
     background: #f5fbff;
     border-left: 4px solid #2c7be5;
@@ -129,6 +110,7 @@ app_css <- HTML("
     margin-bottom: 10px;
   }
 
+  /* Hộp cảnh báo màu vàng */
   .notice-box {
     background: #fff8e1;
     border-left: 4px solid #f0a500;
@@ -139,9 +121,11 @@ app_css <- HTML("
     color: #7a5000;
   }
 
+  /* Trạng thái lưu file */
   .status-ok   { color: green;   font-weight: bold; margin-top: 10px; }
   .status-warn { color: #cc6600; font-weight: bold; margin-top: 10px; }
 
+  /* Badge số lượng mã cần chuẩn hóa */
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -153,6 +137,7 @@ app_css <- HTML("
     margin-left: 8px;
   }
 
+  /* Khối có thể thu gọn chứa bảng cần chuẩn hóa */
   details summary {
     cursor: pointer;
     font-weight: 700;
@@ -161,301 +146,7 @@ app_css <- HTML("
     border-radius: 4px;
   }
   details summary::-webkit-details-marker { display: none; }
-
-  /* Card cho mỗi mã cần chuẩn hóa */
-  .map-card {
-    border: 1px solid #dee2e6;
-    border-radius: 6px;
-    padding: 12px 16px;
-    margin-bottom: 10px;
-    background: #fff;
-  }
-  .map-card .map-code {
-    font-weight: 700;
-    font-size: 14px;
-    color: #1a1a2e;
-    margin-bottom: 8px;
-    font-family: monospace;
-    background: #f0f4f8;
-    padding: 3px 8px;
-    border-radius: 4px;
-    display: inline-block;
-  }
-  .map-card .map-fields {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: flex-start;
-  }
-  .map-card .map-field {
-    flex: 1 1 200px;
-  }
-  .map-card label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #555;
-    margin-bottom: 2px;
-    display: block;
-  }
-  .freetext-group {
-    margin-top: 6px;
-    padding: 8px;
-    background: #fffbf0;
-    border: 1px dashed #f0a500;
-    border-radius: 4px;
-  }
-  .freetext-group label {
-    font-size: 12px;
-    color: #7a5000;
-  }
 ")
-
-# =============================================================================
-# HÀM TẠO UI MAPPING CHO MỖI TAB
-# Tham số:
-#   ns_prefix : tiền tố namespace (vd "v", "k", "b")
-#   missing_df: data frame các mã chưa chuẩn hóa
-#   preset    : list preset từ danh_muc.xlsx
-#   tab_type  : "vsv" | "khoa" | "bp"
-# =============================================================================
-
-build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
-  if (is.null(missing_df) || nrow(missing_df) == 0) {
-    return(div(
-      class = "hint-box",
-      "✅ Không có mã nào cần chuẩn hóa."
-    ))
-  }
-
-  cards <- lapply(seq_len(nrow(missing_df)), function(i) {
-    code <- missing_df$ma_hoa[i]
-    id   <- paste0(ns_prefix, "_row_", i)
-
-    if (tab_type == "vsv") {
-      # Dropdown chọn tên VSV — tự động điền loai_vsv và ten_viet_tat
-      vsv_choices <- c("", NOT_FOUND_LABEL, preset$vsv$ten_vsv)
-      current_vsv <- missing_df$ten_vsv[i]
-
-      div(
-        class = "map-card",
-        div(class = "map-code", code),
-        div(
-          class = "map-fields",
-          div(
-            class = "map-field",
-            tags$label("Tên vi sinh vật (chọn từ danh sách)"),
-            selectInput(
-              inputId  = paste0(id, "_sel"),
-              label    = NULL,
-              choices  = vsv_choices,
-              selected = if (current_vsv %in% vsv_choices) current_vsv else "",
-              width    = "100%"
-            )
-          )
-        ),
-        # Vùng nhập tay — chỉ hiện khi chọn "Không tìm thấy"
-        conditionalPanel(
-          condition = sprintf(
-            "input['%s'] == '%s'",
-            paste0(id, "_sel"), NOT_FOUND_LABEL
-          ),
-          div(
-            class = "freetext-group",
-            fluidRow(
-              column(4,
-                     tags$label("Tên vi sinh vật"),
-                     textInput(paste0(id, "_ten_vsv"),      NULL,
-                               value = missing_df$ten_vsv[i],      width = "100%")),
-              column(4,
-                     tags$label("Loại vi sinh vật"),
-                     textInput(paste0(id, "_loai_vsv"),     NULL,
-                               value = missing_df$loai_vsv[i],     width = "100%")),
-              column(4,
-                     tags$label("Tên viết tắt"),
-                     textInput(paste0(id, "_ten_viet_tat"), NULL,
-                               value = missing_df$ten_viet_tat[i], width = "100%"))
-            )
-          )
-        )
-      )
-
-    } else if (tab_type == "khoa") {
-      # Dropdown chọn nhóm khoa
-      khoa_choices  <- c("", NOT_FOUND_LABEL, preset$khoa$nhom_khoa)
-      current_nhom  <- missing_df$ten_khoa_nhom[i]
-
-      div(
-        class = "map-card",
-        div(class = "map-code", code),
-        div(
-          class = "map-fields",
-          div(
-            class = "map-field",
-            tags$label("Tên khoa (nhập tay)"),
-            textInput(paste0(id, "_ten_khoa"), NULL,
-                      value = missing_df$ten_khoa[i], width = "100%")
-          ),
-          div(
-            class = "map-field",
-            tags$label("Nhóm khoa (chọn từ danh sách)"),
-            selectInput(
-              inputId  = paste0(id, "_nhom_sel"),
-              label    = NULL,
-              choices  = khoa_choices,
-              selected = if (current_nhom %in% khoa_choices) current_nhom else "",
-              width    = "100%"
-            )
-          )
-        ),
-        conditionalPanel(
-          condition = sprintf(
-            "input['%s'] == '%s'",
-            paste0(id, "_nhom_sel"), NOT_FOUND_LABEL
-          ),
-          div(
-            class = "freetext-group",
-            tags$label("Nhóm khoa (nhập tay)"),
-            textInput(paste0(id, "_nhom_free"), NULL,
-                      value = "", width = "100%")
-          )
-        )
-      )
-
-    } else { # tab_type == "bp"
-      # Dropdown chọn nhóm bệnh phẩm
-      bp_choices   <- c("", NOT_FOUND_LABEL, preset$bp$nhom_benh_pham)
-      current_nhom <- missing_df$ten_benh_pham_nhom[i]
-
-      div(
-        class = "map-card",
-        div(class = "map-code", code),
-        div(
-          class = "map-fields",
-          div(
-            class = "map-field",
-            tags$label("Tên bệnh phẩm (nhập tay)"),
-            textInput(paste0(id, "_ten_bp"), NULL,
-                      value = missing_df$ten_benh_pham[i], width = "100%")
-          ),
-          div(
-            class = "map-field",
-            tags$label("Nhóm bệnh phẩm (chọn từ danh sách)"),
-            selectInput(
-              inputId  = paste0(id, "_nhom_sel"),
-              label    = NULL,
-              choices  = bp_choices,
-              selected = if (current_nhom %in% bp_choices) current_nhom else "",
-              width    = "100%"
-            )
-          )
-        ),
-        conditionalPanel(
-          condition = sprintf(
-            "input['%s'] == '%s'",
-            paste0(id, "_nhom_sel"), NOT_FOUND_LABEL
-          ),
-          div(
-            class = "freetext-group",
-            tags$label("Nhóm bệnh phẩm (nhập tay)"),
-            textInput(paste0(id, "_nhom_free"), NULL,
-                      value = "", width = "100%")
-          )
-        )
-      )
-    }
-  })
-
-  tagList(cards)
-}
-
-# =============================================================================
-# HÀM THU GOM GIÁ TRỊ TỪ CÁC INPUT ĐỘNG (mapping cards)
-# Đọc toàn bộ input hiện tại, trả về data frame với các cột đã điền
-# =============================================================================
-
-collect_vsv_inputs <- function(input, missing_df, preset_vsv) {
-  n <- nrow(missing_df)
-  if (n == 0) return(missing_df)
-
-  result <- missing_df
-
-  for (i in seq_len(n)) {
-    id  <- paste0("v_row_", i)
-    sel <- input[[paste0(id, "_sel")]]
-
-    if (!is.null(sel) && sel != "" && sel != NOT_FOUND_LABEL) {
-      # Lấy từ preset: tự điền loai_vsv và ten_viet_tat
-      row <- preset_vsv %>% filter(ten_vsv == sel)
-      if (nrow(row) > 0) {
-        result$ten_vsv[i]      <- row$ten_vsv[1]
-        result$loai_vsv[i]     <- row$loai_vsv[1]
-        result$ten_viet_tat[i] <- row$ten_viet_tat[1]
-      }
-    } else if (!is.null(sel) && sel == NOT_FOUND_LABEL) {
-      # Lấy giá trị nhập tay
-      result$ten_vsv[i]      <- input[[paste0(id, "_ten_vsv")]]      %||% ""
-      result$loai_vsv[i]     <- input[[paste0(id, "_loai_vsv")]]     %||% ""
-      result$ten_viet_tat[i] <- input[[paste0(id, "_ten_viet_tat")]] %||% ""
-    }
-  }
-
-  result
-}
-
-collect_khoa_inputs <- function(input, missing_df) {
-  n <- nrow(missing_df)
-  if (n == 0) return(missing_df)
-
-  result <- missing_df
-
-  for (i in seq_len(n)) {
-    id       <- paste0("k_row_", i)
-    ten_khoa <- input[[paste0(id, "_ten_khoa")]] %||% ""
-    nhom_sel <- input[[paste0(id, "_nhom_sel")]]
-
-    nhom_val <- if (!is.null(nhom_sel) && nhom_sel == NOT_FOUND_LABEL) {
-      input[[paste0(id, "_nhom_free")]] %||% ""
-    } else if (!is.null(nhom_sel) && nhom_sel != "") {
-      nhom_sel
-    } else {
-      ""
-    }
-
-    result$ten_khoa[i]      <- ten_khoa
-    result$ten_khoa_nhom[i] <- nhom_val
-  }
-
-  result
-}
-
-collect_bp_inputs <- function(input, missing_df) {
-  n <- nrow(missing_df)
-  if (n == 0) return(missing_df)
-
-  result <- missing_df
-
-  for (i in seq_len(n)) {
-    id      <- paste0("b_row_", i)
-    ten_bp  <- input[[paste0(id, "_ten_bp")]] %||% ""
-    nhom_sel <- input[[paste0(id, "_nhom_sel")]]
-
-    nhom_val <- if (!is.null(nhom_sel) && nhom_sel == NOT_FOUND_LABEL) {
-      input[[paste0(id, "_nhom_free")]] %||% ""
-    } else if (!is.null(nhom_sel) && nhom_sel != "") {
-      nhom_sel
-    } else {
-      ""
-    }
-
-    result$ten_benh_pham[i]      <- ten_bp
-    result$ten_benh_pham_nhom[i] <- nhom_val
-  }
-
-  result
-}
-
-# Toán tử tiện ích: thay thế NULL bằng giá trị mặc định
-`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # =============================================================================
 # GIAO DIỆN NGƯỜI DÙNG (UI)
@@ -471,6 +162,7 @@ ui <- fluidPage(
 
     # =========================================================================
     # TAB 1 — TÊN VI SINH VẬT
+    # Danh mục cần có cột: ma_hoa | ten_vsv | loai_vsv | ten_viet_tat
     # =========================================================================
     tabPanel(
       "Tên VSV",
@@ -478,9 +170,6 @@ ui <- fluidPage(
       sidebarLayout(
         sidebarPanel(
 
-          uiOutput("preset_status"),
-
-          hr(),
           h4("1) Chọn file đầu vào"),
 
           div(class = "drop-zone",
@@ -494,18 +183,19 @@ ui <- fluidPage(
           fileInput("v_ref_file", label = NULL, multiple = FALSE, accept = ".xlsx"),
 
           hr(),
+
           h4("2) Kiểm tra"),
           actionButton("v_check_missing", "🔍 Kiểm tra mã chưa chuẩn hóa",
                        class = "btn-primary", width = "100%"),
 
           hr(),
+
           h4("3) Áp dụng cập nhật"),
-          div(class = "hint-box",
-              "Điền thông tin cho các mã còn thiếu ở bảng bên phải, sau đó nhấn Áp dụng."),
           actionButton("v_apply_updates", "✔ Áp dụng cập nhật",
                        class = "btn-success", width = "100%"),
 
           br(), br(),
+
           h4("4) Lưu file"),
           div(class = "notice-box",
               HTML("⚠️ <b>Lưu đè:</b> Ghi đè lên file Danh mục VSV gốc.
@@ -522,20 +212,20 @@ ui <- fluidPage(
           verbatimTextOutput("v_summary"),
           hr(),
           h4("Mã VSV cần chuẩn hóa"),
-          div(class = "hint-box", HTML(
-            "Với mỗi mã, chọn tên VSV từ danh sách preset.<br>
-             Nếu không tìm thấy, chọn <b>\"Không tìm thấy\"</b> để nhập tay."
-          )),
+          div(class = "hint-box",
+              "Nhấn vào ô trong bảng để sửa trực tiếp. Các cột cần điền:
+               Tên vi sinh vật, Loại vi sinh vật, Tên viết tắt."),
           uiOutput("v_missing_folded_ui"),
           hr(),
           h4("Xem trước danh mục sau cập nhật"),
-          DT::DTOutput("v_ref_preview")
+          DTOutput("v_ref_preview")
         )
       )
     ),
 
     # =========================================================================
     # TAB 2 — TÊN KHOA
+    # Danh mục cần có cột: ma_hoa | ten_khoa | ten_khoa_nhom
     # =========================================================================
     tabPanel(
       "Tên khoa",
@@ -556,18 +246,19 @@ ui <- fluidPage(
           fileInput("k_ref_file", label = NULL, multiple = FALSE, accept = ".xlsx"),
 
           hr(),
+
           h4("2) Kiểm tra"),
           actionButton("k_check_missing", "🔍 Kiểm tra Tên khoa chưa chuẩn hóa",
                        class = "btn-primary", width = "100%"),
 
           hr(),
+
           h4("3) Áp dụng cập nhật"),
-          div(class = "hint-box",
-              "Điền thông tin cho các khoa còn thiếu ở bảng bên phải, sau đó nhấn Áp dụng."),
           actionButton("k_apply_updates", "✔ Áp dụng cập nhật",
                        class = "btn-success", width = "100%"),
 
           br(), br(),
+
           h4("4) Lưu file"),
           div(class = "notice-box",
               HTML("⚠️ <b>Lưu đè:</b> Ghi đè lên file Danh mục Tên khoa gốc.
@@ -584,20 +275,20 @@ ui <- fluidPage(
           verbatimTextOutput("k_summary"),
           hr(),
           h4("Tên khoa cần chuẩn hóa"),
-          div(class = "hint-box", HTML(
-            "Nhập <b>Tên khoa</b> và chọn <b>Nhóm khoa</b> từ danh sách preset.<br>
-             Nếu không tìm thấy nhóm phù hợp, chọn <b>\"Không tìm thấy\"</b> để nhập tay."
-          )),
+          div(class = "hint-box",
+              "Nhấn vào ô trong bảng để sửa trực tiếp. Các cột cần điền:
+               Tên khoa, Nhóm khoa."),
           uiOutput("k_missing_folded_ui"),
           hr(),
           h4("Xem trước danh mục sau cập nhật"),
-          DT::DTOutput("k_ref_preview")
+          DTOutput("k_ref_preview")
         )
       )
     ),
 
     # =========================================================================
     # TAB 3 — TÊN BỆNH PHẨM
+    # Danh mục cần có cột: ma_hoa | ten_benh_pham | ten_benh_pham_nhom
     # =========================================================================
     tabPanel(
       "Tên bệnh phẩm",
@@ -618,19 +309,20 @@ ui <- fluidPage(
           fileInput("b_ref_file", label = NULL, multiple = FALSE, accept = ".xlsx"),
 
           hr(),
+
           h4("2) Kiểm tra"),
           actionButton("b_check_missing",
                        "🔍 Kiểm tra Tên bệnh phẩm chưa chuẩn hóa",
                        class = "btn-primary", width = "100%"),
 
           hr(),
+
           h4("3) Áp dụng cập nhật"),
-          div(class = "hint-box",
-              "Điền thông tin cho các bệnh phẩm còn thiếu ở bảng bên phải, sau đó nhấn Áp dụng."),
           actionButton("b_apply_updates", "✔ Áp dụng cập nhật",
                        class = "btn-success", width = "100%"),
 
           br(), br(),
+
           h4("4) Lưu file"),
           div(class = "notice-box",
               HTML("⚠️ <b>Lưu đè:</b> Ghi đè lên file Danh mục Tên bệnh phẩm gốc.
@@ -648,14 +340,13 @@ ui <- fluidPage(
           verbatimTextOutput("b_summary"),
           hr(),
           h4("Tên bệnh phẩm cần chuẩn hóa"),
-          div(class = "hint-box", HTML(
-            "Nhập <b>Tên bệnh phẩm</b> và chọn <b>Nhóm bệnh phẩm</b> từ danh sách preset.<br>
-             Nếu không tìm thấy nhóm phù hợp, chọn <b>\"Không tìm thấy\"</b> để nhập tay."
-          )),
+          div(class = "hint-box",
+              "Nhấn vào ô trong bảng để sửa trực tiếp. Các cột cần điền:
+               Tên bệnh phẩm, Nhóm bệnh phẩm."),
           uiOutput("b_missing_folded_ui"),
           hr(),
           h4("Xem trước danh mục sau cập nhật"),
-          DT::DTOutput("b_ref_preview")
+          DTOutput("b_ref_preview")
         )
       )
     )
@@ -668,51 +359,39 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  # ---------------------------------------------------------------------------
-  # PRESET — dùng chung cho tất cả tab
-  # ---------------------------------------------------------------------------
-
-  # Đọc preset một lần khi app khởi động từ đường dẫn tương đối
-  # File danh_muc.xlsx phải nằm cùng thư mục gốc project (cạnh app_danh_muc.R)
-  preset_data <- local({
-    path <- here::here("danh_muc.xlsx")
-    p    <- load_preset(path)
-    if (is.null(p)) stop(sprintf("Không tìm thấy hoặc không đọc được file preset: %s", path))
-    p
-  })
-
-  output$preset_status <- renderUI({
-    div(class = "status-ok",
-        sprintf("✅ Preset đã tải: %d VSV | %d nhóm khoa | %d nhóm bệnh phẩm",
-                nrow(preset_data$vsv),
-                nrow(preset_data$khoa),
-                nrow(preset_data$bp)))
-  })
-
   # ===========================================================================
   # TAB 1 — TÊN VI SINH VẬT
   # ===========================================================================
 
-  v_missing_df   <- reactiveVal(NULL)
-  v_updated_ref  <- reactiveVal(NULL)
-  v_save_message <- reactiveVal("")
+  # Trạng thái nội bộ của tab: bảng cần chuẩn hóa và danh mục đã cập nhật
+  v_missing_editable <- reactiveVal(NULL)  # bảng mã chưa chuẩn hóa (có thể sửa)
+  v_updated_ref      <- reactiveVal(NULL)  # danh mục sau khi áp dụng cập nhật
+  v_save_message     <- reactiveVal("")    # thông báo trạng thái lưu
 
+  # Đọc và kiểm tra file danh mục VSV
   v_ref_df <- reactive({
     req(input$v_ref_file)
-    df <- tryCatch(openxlsx::read.xlsx(input$v_ref_file$datapath),
-                   error = function(e) NULL)
+    df <- tryCatch(
+      openxlsx::read.xlsx(input$v_ref_file$datapath),
+      error = function(e) NULL
+    )
     validate(need(!is.null(df), "Không đọc được file Danh mục VSV."))
     names(df) <- stringi::stri_trim_both(names(df))
+
+    # Kiểm tra các cột bắt buộc
     validate(
       need("ma_hoa"       %in% names(df), "Thiếu cột: ma_hoa"),
       need("ten_vsv"      %in% names(df), "Thiếu cột: ten_vsv"),
       need("loai_vsv"     %in% names(df), "Thiếu cột: loai_vsv"),
       need("ten_viet_tat" %in% names(df), "Thiếu cột: ten_viet_tat")
     )
+
+    # Thêm cột khóa chuẩn hóa để so khớp không phân biệt dấu/hoa thường
     df %>% transmute(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat,
                      .key = normalize_key(ma_hoa))
   })
 
+  # Đọc tất cả file WHONET, trích xuất cột Organism (mã vi sinh vật)
   v_raw_df <- reactive({
     req(input$v_raw_files)
     files <- input$v_raw_files$datapath
@@ -721,23 +400,28 @@ server <- function(input, output, session) {
       f          <- files[i]
       header_row <- detect_header_row(f)
       if (is.null(header_row)) return(NULL)
+
       df <- tryCatch(openxlsx::read.xlsx(f, startRow = header_row),
                      error = function(e) NULL)
       if (is.null(df)) return(NULL)
+
       names(df) <- stringi::stri_trim_both(names(df))
       if (!"Organism" %in% names(df)) return(NULL)
+
       df %>% transmute(ma_hoa = as.character(Organism))
     })
 
     all_org <- all_org[!sapply(all_org, is.null)]
     validate(need(length(all_org) > 0, "Không file nào có cột Organism."))
 
+    # Gộp, lọc trống, loại trùng, thêm khóa chuẩn hóa
     bind_rows(all_org) %>%
       filter(!is.na(ma_hoa), trimws(ma_hoa) != "") %>%
       distinct() %>%
       mutate(.key = normalize_key(ma_hoa))
   })
 
+  # Tổng quan: số mã đã / chưa chuẩn hóa
   output$v_summary <- renderText({
     joined <- v_raw_df() %>% left_join(v_ref_df(), by = ".key")
     total  <- nrow(joined)
@@ -747,12 +431,13 @@ server <- function(input, output, session) {
         !is.na(joined$ten_viet_tat) & trimws(joined$ten_viet_tat) != ""
     )
     paste0(
-      "Tổng số mã VSV trong WHONET    : ", total, "\n",
-      "Đã chuẩn hóa đầy đủ            : ", done,  "\n",
+      "Tổng số mã VSV trong WHONET : ", total, "\n",
+      "Đã chuẩn hóa đầy đủ         : ", done, "\n",
       "Chưa chuẩn hóa / thiếu thông tin: ", total - done
     )
   })
 
+  # Tìm và hiển thị danh sách mã chưa chuẩn hóa khi nhấn Kiểm tra
   observeEvent(input$v_check_missing, {
     joined <- v_raw_df() %>%
       select(ma_hoa_raw = ma_hoa, .key) %>%
@@ -772,47 +457,63 @@ server <- function(input, output, session) {
       ) %>%
       arrange(ma_hoa)
 
-    v_missing_df(miss)
-    v_updated_ref(NULL)
+    v_missing_editable(miss)
+    v_updated_ref(NULL) # reset bản nháp khi kiểm tra lại
   })
 
+  # Render bảng danh sách cần chuẩn hóa trong khối thu gọn (details/summary)
   output$v_missing_folded_ui <- renderUI({
-    df <- v_missing_df()
+    df <- v_missing_editable()
     if (is.null(df)) return(NULL)
-
-    p <- preset_data
-
     tags$details(
-      open = TRUE,
-      tags$summary(
-        "Danh sách cần chuẩn hóa",
-        span(class = "badge", nrow(df))
-      ),
-      br(),
-      build_mapping_ui("v", df, p, "vsv")
+      tags$summary("Danh sách cần chuẩn hóa", span(class = "badge", nrow(df))),
+      DTOutput("v_missing_tbl")
     )
   })
 
+  # Bảng có thể sửa trực tiếp — cột đầu (ma_hoa) bị khóa, các cột còn lại được sửa
+  output$v_missing_tbl <- renderDT({
+    datatable(
+      v_missing_editable(), rownames = FALSE,
+      editable = list(target = "cell", disable = list(columns = 0)),
+      options  = list(dom = "t", paging = FALSE, scrollY = "45vh",
+                      language = list(emptyTable = "Không có dữ liệu cần chuẩn hóa"))
+    )
+  })
+
+  # Cập nhật reactive khi người dùng sửa một ô trong bảng
+  observeEvent(input$v_missing_tbl_cell_edit, {
+    info <- input$v_missing_tbl_cell_edit
+    df   <- v_missing_editable()
+    df[info$row, info$col + 1] <- info$value # col + 1 vì rownames = FALSE
+    v_missing_editable(df)
+  })
+
+  # Hàm nội bộ: áp dụng các thay đổi từ bảng vào danh mục tham chiếu
+  # - Cập nhật dòng đã có (khớp .key)
+  # - Thêm dòng mới nếu mã chưa tồn tại trong danh mục
   v_apply_updates_core <- function() {
     work <- v_updated_ref()
-    if (is.null(work)) work <- v_ref_df()
+    if (is.null(work)) work <- v_ref_df() # bắt đầu từ danh mục hiện tại
 
-    miss <- v_missing_df()
-    if (is.null(miss) || nrow(miss) == 0) return(work)
+    miss <- v_missing_editable()
+    if (is.null(miss)) return(work)
 
-    p <- preset_data
-    to_apply  <- collect_vsv_inputs(input, miss, p$vsv) %>%
-      filter(trimws(ten_vsv) != "")
+    # Chỉ áp dụng những dòng có ít nhất một trường đã được điền
+    to_apply <- miss %>%
+      filter(trimws(ten_vsv) != "" | trimws(loai_vsv) != "" | trimws(ten_viet_tat) != "")
 
     for (i in seq_len(nrow(to_apply))) {
       key <- normalize_key(to_apply$ma_hoa[i])
       idx <- which(work$.key == key)
 
       if (length(idx) > 0) {
+        # Cập nhật dòng đã có
         work$ten_vsv[idx]      <- to_apply$ten_vsv[i]
         work$loai_vsv[idx]     <- to_apply$loai_vsv[i]
         work$ten_viet_tat[idx] <- to_apply$ten_viet_tat[i]
       } else {
+        # Thêm dòng mới
         work <- bind_rows(work, tibble(
           ma_hoa       = to_apply$ma_hoa[i],
           ten_vsv      = to_apply$ten_vsv[i],
@@ -827,16 +528,20 @@ server <- function(input, output, session) {
     work
   }
 
+  # Nút Áp dụng: cập nhật danh mục nháp, báo người dùng
   observeEvent(input$v_apply_updates, {
     v_apply_updates_core()
     v_save_message("Đã áp dụng cập nhật vào dữ liệu tạm. Nhấn Lưu đè để ghi file.")
   })
 
+  # Nút Lưu đè: mở hộp thoại Save-As, kiểm tra tên file, ghi Excel
   observeEvent(input$v_save_as_btn, {
+
     if (is.null(input$v_ref_file)) {
       v_save_message("⚠️ Chưa chọn file Danh mục VSV.")
       return()
     }
+
     out <- tryCatch(v_apply_updates_core(), error = function(e) {
       v_save_message(paste("Lỗi khi chuẩn bị dữ liệu:", e$message))
       NULL
@@ -850,8 +555,13 @@ server <- function(input, output, session) {
       v_save_message("ℹ️ Đã hủy: không chọn đường dẫn lưu.")
       return()
     }
+
+    # Bảo vệ: cảnh báo nếu người dùng đổi tên file (có thể ghi nhầm)
     if (!identical(basename(path), ref_filename)) {
-      v_save_message(paste0("⚠️ Tên file không khớp với file gốc (", ref_filename, ")."))
+      v_save_message(paste0(
+        "⚠️ Tên file không khớp với file gốc (", ref_filename,
+        "). Vui lòng đặt đúng tên file gốc."
+      ))
       return()
     }
 
@@ -871,9 +581,10 @@ server <- function(input, output, session) {
     div(class = cls, msg)
   })
 
-  output$v_ref_preview <- DT::renderDT({
+  # Bảng xem trước danh mục sau khi áp dụng cập nhật
+  output$v_ref_preview <- renderDT({
     req(v_updated_ref())
-    DT::datatable(
+    datatable(
       v_updated_ref() %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat),
       rownames = FALSE
     )
@@ -881,16 +592,20 @@ server <- function(input, output, session) {
 
   # ===========================================================================
   # TAB 2 — TÊN KHOA
+  # Cấu trúc giống hệt Tab 1, chỉ khác tên cột và tên file danh mục
   # ===========================================================================
 
-  k_missing_df   <- reactiveVal(NULL)
-  k_updated_ref  <- reactiveVal(NULL)
-  k_save_message <- reactiveVal("")
+  k_missing_editable <- reactiveVal(NULL)
+  k_updated_ref      <- reactiveVal(NULL)
+  k_save_message     <- reactiveVal("")
 
+  # Đọc và kiểm tra file danh mục Tên khoa
   k_ref_df <- reactive({
     req(input$k_ref_file)
-    df <- tryCatch(openxlsx::read.xlsx(input$k_ref_file$datapath),
-                   error = function(e) NULL)
+    df <- tryCatch(
+      openxlsx::read.xlsx(input$k_ref_file$datapath),
+      error = function(e) NULL
+    )
     validate(need(!is.null(df), "Không đọc được file Danh mục Tên khoa."))
     names(df) <- stringi::stri_trim_both(names(df))
     validate(
@@ -902,6 +617,7 @@ server <- function(input, output, session) {
                      .key = normalize_key(ma_hoa))
   })
 
+  # Trích xuất cột Location (tên khoa) từ các file WHONET
   k_raw_df <- reactive({
     req(input$k_raw_files)
     files <- input$k_raw_files$datapath
@@ -910,11 +626,14 @@ server <- function(input, output, session) {
       f          <- files[i]
       header_row <- detect_header_row(f)
       if (is.null(header_row)) return(NULL)
+
       df <- tryCatch(openxlsx::read.xlsx(f, startRow = header_row),
                      error = function(e) NULL)
       if (is.null(df)) return(NULL)
+
       names(df) <- stringi::stri_trim_both(names(df))
       if (!"Location" %in% names(df)) return(NULL)
+
       df %>% transmute(ma_hoa = as.character(Location))
     })
 
@@ -935,8 +654,8 @@ server <- function(input, output, session) {
         !is.na(joined$ten_khoa_nhom) & trimws(joined$ten_khoa_nhom) != ""
     )
     paste0(
-      "Tổng số tên khoa trong WHONET   : ", total, "\n",
-      "Đã chuẩn hóa đầy đủ             : ", done,  "\n",
+      "Tổng số tên khoa trong WHONET: ", total, "\n",
+      "Đã chuẩn hóa đầy đủ          : ", done, "\n",
       "Chưa chuẩn hóa / thiếu thông tin: ", total - done
     )
   })
@@ -958,35 +677,43 @@ server <- function(input, output, session) {
       ) %>%
       arrange(ma_hoa)
 
-    k_missing_df(miss)
+    k_missing_editable(miss)
     k_updated_ref(NULL)
   })
 
   output$k_missing_folded_ui <- renderUI({
-    df <- k_missing_df()
+    df <- k_missing_editable()
     if (is.null(df)) return(NULL)
-
-    p <- preset_data
-
     tags$details(
-      open = TRUE,
-      tags$summary(
-        "Danh sách cần chuẩn hóa",
-        span(class = "badge", nrow(df))
-      ),
-      br(),
-      build_mapping_ui("k", df, p, "khoa")
+      tags$summary("Danh sách cần chuẩn hóa", span(class = "badge", nrow(df))),
+      DTOutput("k_missing_tbl")
     )
+  })
+
+  output$k_missing_tbl <- renderDT({
+    datatable(
+      k_missing_editable(), rownames = FALSE,
+      editable = list(target = "cell", disable = list(columns = 0)),
+      options  = list(dom = "t", paging = FALSE, scrollY = "45vh",
+                      language = list(emptyTable = "Không có dữ liệu cần chuẩn hóa"))
+    )
+  })
+
+  observeEvent(input$k_missing_tbl_cell_edit, {
+    info <- input$k_missing_tbl_cell_edit
+    df   <- k_missing_editable()
+    df[info$row, info$col + 1] <- info$value
+    k_missing_editable(df)
   })
 
   k_apply_updates_core <- function() {
     work <- k_updated_ref()
     if (is.null(work)) work <- k_ref_df()
 
-    miss <- k_missing_df()
-    if (is.null(miss) || nrow(miss) == 0) return(work)
+    miss <- k_missing_editable()
+    if (is.null(miss)) return(work)
 
-    to_apply <- collect_khoa_inputs(input, miss) %>%
+    to_apply <- miss %>%
       filter(trimws(ten_khoa) != "" | trimws(ten_khoa_nhom) != "")
 
     for (i in seq_len(nrow(to_apply))) {
@@ -1016,10 +743,12 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$k_save_as_btn, {
+
     if (is.null(input$k_ref_file)) {
       k_save_message("⚠️ Chưa chọn file Danh mục Tên khoa.")
       return()
     }
+
     out <- tryCatch(k_apply_updates_core(), error = function(e) {
       k_save_message(paste("Lỗi:", e$message))
       NULL
@@ -1034,7 +763,9 @@ server <- function(input, output, session) {
       return()
     }
     if (!identical(basename(path), ref_filename)) {
-      k_save_message(paste0("⚠️ Tên file không khớp với file gốc (", ref_filename, ")."))
+      k_save_message(paste0(
+        "⚠️ Tên file không khớp với file gốc (", ref_filename, ")."
+      ))
       return()
     }
 
@@ -1054,9 +785,9 @@ server <- function(input, output, session) {
     div(class = cls, msg)
   })
 
-  output$k_ref_preview <- DT::renderDT({
+  output$k_ref_preview <- renderDT({
     req(k_updated_ref())
-    DT::datatable(
+    datatable(
       k_updated_ref() %>% select(ma_hoa, ten_khoa, ten_khoa_nhom),
       rownames = FALSE
     )
@@ -1064,16 +795,21 @@ server <- function(input, output, session) {
 
   # ===========================================================================
   # TAB 3 — TÊN BỆNH PHẨM
+  # Cấu trúc giống hệt Tab 1 & 2, khác cột: ten_benh_pham, ten_benh_pham_nhom
+  # Trích xuất từ cột "Specimen type" trong file WHONET
   # ===========================================================================
 
-  b_missing_df   <- reactiveVal(NULL)
-  b_updated_ref  <- reactiveVal(NULL)
-  b_save_message <- reactiveVal("")
+  b_missing_editable <- reactiveVal(NULL)
+  b_updated_ref      <- reactiveVal(NULL)
+  b_save_message     <- reactiveVal("")
 
+  # Đọc và kiểm tra file danh mục Tên bệnh phẩm
   b_ref_df <- reactive({
     req(input$b_ref_file)
-    df <- tryCatch(openxlsx::read.xlsx(input$b_ref_file$datapath),
-                   error = function(e) NULL)
+    df <- tryCatch(
+      openxlsx::read.xlsx(input$b_ref_file$datapath),
+      error = function(e) NULL
+    )
     validate(need(!is.null(df), "Không đọc được file Danh mục Tên bệnh phẩm."))
     names(df) <- stringi::stri_trim_both(names(df))
     validate(
@@ -1085,6 +821,7 @@ server <- function(input, output, session) {
                      .key = normalize_key(ma_hoa))
   })
 
+  # Trích xuất cột "Specimen type" (loại bệnh phẩm) từ các file WHONET
   b_raw_df <- reactive({
     req(input$b_raw_files)
     files <- input$b_raw_files$datapath
@@ -1093,11 +830,14 @@ server <- function(input, output, session) {
       f          <- files[i]
       header_row <- detect_header_row(f)
       if (is.null(header_row)) return(NULL)
+
       df <- tryCatch(openxlsx::read.xlsx(f, startRow = header_row),
                      error = function(e) NULL)
       if (is.null(df)) return(NULL)
+
       names(df) <- stringi::stri_trim_both(names(df))
       if (!"Specimen type" %in% names(df)) return(NULL)
+
       df %>% transmute(ma_hoa = as.character(`Specimen type`))
     })
 
@@ -1119,7 +859,7 @@ server <- function(input, output, session) {
     )
     paste0(
       "Tổng số tên bệnh phẩm trong WHONET: ", total, "\n",
-      "Đã chuẩn hóa đầy đủ               : ", done,  "\n",
+      "Đã chuẩn hóa đầy đủ               : ", done, "\n",
       "Chưa chuẩn hóa / thiếu thông tin  : ", total - done
     )
   })
@@ -1141,35 +881,43 @@ server <- function(input, output, session) {
       ) %>%
       arrange(ma_hoa)
 
-    b_missing_df(miss)
+    b_missing_editable(miss)
     b_updated_ref(NULL)
   })
 
   output$b_missing_folded_ui <- renderUI({
-    df <- b_missing_df()
+    df <- b_missing_editable()
     if (is.null(df)) return(NULL)
-
-    p <- preset_data
-
     tags$details(
-      open = TRUE,
-      tags$summary(
-        "Danh sách cần chuẩn hóa",
-        span(class = "badge", nrow(df))
-      ),
-      br(),
-      build_mapping_ui("b", df, p, "bp")
+      tags$summary("Danh sách cần chuẩn hóa", span(class = "badge", nrow(df))),
+      DTOutput("b_missing_tbl")
     )
+  })
+
+  output$b_missing_tbl <- renderDT({
+    datatable(
+      b_missing_editable(), rownames = FALSE,
+      editable = list(target = "cell", disable = list(columns = 0)),
+      options  = list(dom = "t", paging = FALSE, scrollY = "45vh",
+                      language = list(emptyTable = "Không có dữ liệu cần chuẩn hóa"))
+    )
+  })
+
+  observeEvent(input$b_missing_tbl_cell_edit, {
+    info <- input$b_missing_tbl_cell_edit
+    df   <- b_missing_editable()
+    df[info$row, info$col + 1] <- info$value
+    b_missing_editable(df)
   })
 
   b_apply_updates_core <- function() {
     work <- b_updated_ref()
     if (is.null(work)) work <- b_ref_df()
 
-    miss <- b_missing_df()
-    if (is.null(miss) || nrow(miss) == 0) return(work)
+    miss <- b_missing_editable()
+    if (is.null(miss)) return(work)
 
-    to_apply <- collect_bp_inputs(input, miss) %>%
+    to_apply <- miss %>%
       filter(trimws(ten_benh_pham) != "" | trimws(ten_benh_pham_nhom) != "")
 
     for (i in seq_len(nrow(to_apply))) {
@@ -1199,10 +947,12 @@ server <- function(input, output, session) {
   })
 
   observeEvent(input$b_save_as_btn, {
+
     if (is.null(input$b_ref_file)) {
       b_save_message("⚠️ Chưa chọn file Danh mục Tên bệnh phẩm.")
       return()
     }
+
     out <- tryCatch(b_apply_updates_core(), error = function(e) {
       b_save_message(paste("Lỗi:", e$message))
       NULL
@@ -1217,7 +967,9 @@ server <- function(input, output, session) {
       return()
     }
     if (!identical(basename(path), ref_filename)) {
-      b_save_message(paste0("⚠️ Tên file không khớp với file gốc (", ref_filename, ")."))
+      b_save_message(paste0(
+        "⚠️ Tên file không khớp với file gốc (", ref_filename, ")."
+      ))
       return()
     }
 
@@ -1237,9 +989,9 @@ server <- function(input, output, session) {
     div(class = cls, msg)
   })
 
-  output$b_ref_preview <- DT::renderDT({
+  output$b_ref_preview <- renderDT({
     req(b_updated_ref())
-    DT::datatable(
+    datatable(
       b_updated_ref() %>% select(ma_hoa, ten_benh_pham, ten_benh_pham_nhom),
       rownames = FALSE
     )
