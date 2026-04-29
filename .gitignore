@@ -1,14 +1,12 @@
 # =============================================================================
 # R session artefacts — never commit these
 # =============================================================================
-.Rhistory
-.RData
-.Rproj.user/
+# R
 **/.Rhistory
 **/.RData
 **/Rproj.user/
 
-# renv internal caches (lock file IS committed; libraries are not)
+# renv
 **/renv/library/
 **/renv/sandbox/
 **/renv/staging/
