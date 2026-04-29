@@ -1,11 +1,52 @@
-# RStudio project user state & cache
-*.Rproj.user/
+# =============================================================================
+# R session artefacts — never commit these
+# =============================================================================
 .Rhistory
 .RData
-.Rproj.user
+.Rproj.user/
+**/.Rhistory
+**/.RData
+**/Rproj.user/
 
-# renv
-renv/library/
-renv/sandbox/
-renv/staging/
-renv/.cache/
+# renv internal caches (lock file IS committed; libraries are not)
+**/renv/library/
+**/renv/sandbox/
+**/renv/staging/
+**/renv/.cache/
+
+# =============================================================================
+# Data files — block by default, allow explicitly with: git add -f <file>
+# =============================================================================
+
+# Tabular / spreadsheet
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.tsv
+
+# Columnar / binary data
+*.parquet
+*.feather
+*.arrow
+
+# Microsoft Access
+*.accdb
+*.mdb
+
+# Statistical software formats
+*.sav        # SPSS
+*.dta        # Stata
+*.sas7bdat   # SAS
+
+# R binary objects (may contain raw patient data)
+*.rds
+*.rda
+*.RData
+
+# =============================================================================
+# OS / editor noise
+# =============================================================================
+.DS_Store
+Thumbs.db
+*.swp
