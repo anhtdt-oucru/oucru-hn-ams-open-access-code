@@ -1,15 +1,13 @@
 # =============================================================================
 # ỨNG DỤNG : Cập nhật Danh mục tham chiếu
-# Version : 2025-04-22
+# Version : 2025-04-29
 # -----------------------------------------------------------------------------
 # CHANGELOG
-#   2025-04-22
-#     - Thay bảng DT editable (step 3) bằng giao diện dropdown preset + fallback
-#     - Preset đọc từ danh_muc.xlsx qua here::here()
-#     - Hỗ trợ song ngữ WHONET: Organism/Vi khuẩn, Location/Vùng, Specimen type/Loại bệnh phẩm
-#     - Sửa lỗi Unicode NFD: chuẩn hóa NFC toàn bộ tên cột sau khi đọc
-#     - Sửa lỗi openxlsx đổi khoảng trắng thành "." trong tên cột
-#     - detect_header_row() đơn giản hóa: dò 10 dòng đầu, kiểm tra cột B
+#   2025-04-29
+#     - Thay openxlsx::write.xlsx → writexl::write_xlsx để xuất file
+#       (openxlsx tạo file không đọc được trong Power BI Power Query)
+#     - Tăng shiny.maxRequestSize lên 100MB (mặc định 5MB → lỗi upload file lớn)
+# Changelog cũ được lưu tại github
 # -----------------------------------------------------------------------------
 # Mục đích : Phát hiện các mã chưa được chuẩn hóa trong ba danh mục tham chiếu
 #            (Vi sinh vật, Tên khoa, Tên bệnh phẩm), cho phép người dùng điền
@@ -25,22 +23,21 @@
 #   (2) Kiểm tra → hiển thị danh sách mã chưa chuẩn hóa
 #   (3) Chọn từ dropdown preset (hoặc "Không tìm thấy" → nhập tay) → Áp dụng
 #   (4) Lưu đè file danh mục gốc qua hộp thoại Save-As
-#
-# Thay đổi so với phiên bản cũ (step 3):
-#   - Thay bảng DT editable bằng giao diện dropdown + fallback nhập tay
-#   - Preset lấy từ file danh_muc.xlsx (3 sheets: ten_vsv, ten_khoa, ten_benh_pham)
-#   - Chọn tên VSV từ preset tự động điền loai_vsv và ten_viet_tat
-#   - Chọn "Không tìm thấy" mở ô nhập tay cho từng trường
 # =============================================================================
 
 suppressPackageStartupMessages({
   library(shiny)     # framework giao diện web
   library(dplyr)     # xử lý data frame
-  library(openxlsx)  # đọc / ghi file Excel
+  library(openxlsx)  # đọc file Excel (read only — write dùng writexl)
+  library(writexl)   # ghi file Excel (thay openxlsx::write.xlsx)
   library(stringi)   # chuẩn hóa chuỗi (bỏ dấu, trim)
   library(tibble)    # tạo tibble nhanh khi thêm dòng mới
   library(here)      # đường dẫn tương đối so với thư mục gốc project
 })
+# 
+
+# # Tăng giới hạn upload (mặc định Shiny là 5MB), đã thêm vào .Rprofile
+# options(shiny.maxRequestSize = 100 * 1024^2)
 
 # =============================================================================
 # HẰNG SỐ: Tùy chọn "Không tìm thấy" trong dropdown
@@ -104,7 +101,7 @@ detect_header_row <- function(path) {
 # Đọc file preset danh_muc.xlsx, trả về list gồm 3 data frame
 load_preset <- function(path) {
   tryCatch({
-    vsv <- openxlsx::read.xlsx(path, sheet = "ten_vsv")
+    vsv  <- openxlsx::read.xlsx(path, sheet = "ten_vsv")
     khoa <- openxlsx::read.xlsx(path, sheet = "ten_khoa")
     bp   <- openxlsx::read.xlsx(path, sheet = "ten_benh_pham")
     list(vsv = vsv, khoa = khoa, bp = bp)
@@ -241,7 +238,6 @@ build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
     id   <- paste0(ns_prefix, "_row_", i)
     
     if (tab_type == "vsv") {
-      # Dropdown chọn tên VSV — tự động điền loai_vsv và ten_viet_tat
       vsv_choices <- c("", NOT_FOUND_LABEL, preset$vsv$ten_vsv)
       current_vsv <- missing_df$ten_vsv[i]
       
@@ -262,7 +258,6 @@ build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
             )
           )
         ),
-        # Vùng nhập tay — chỉ hiện khi chọn "Không tìm thấy"
         conditionalPanel(
           condition = sprintf(
             "input['%s'] == '%s'",
@@ -289,9 +284,8 @@ build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
       )
       
     } else if (tab_type == "khoa") {
-      # Dropdown chọn nhóm khoa
-      khoa_choices  <- c("", NOT_FOUND_LABEL, preset$khoa$nhom_khoa)
-      current_nhom  <- missing_df$ten_khoa_nhom[i]
+      khoa_choices <- c("", NOT_FOUND_LABEL, preset$khoa$nhom_khoa)
+      current_nhom <- missing_df$ten_khoa_nhom[i]
       
       div(
         class = "map-card",
@@ -331,7 +325,6 @@ build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
       )
       
     } else { # tab_type == "bp"
-      # Dropdown chọn nhóm bệnh phẩm
       bp_choices   <- c("", NOT_FOUND_LABEL, preset$bp$nhom_benh_pham)
       current_nhom <- missing_df$ten_benh_pham_nhom[i]
       
@@ -379,7 +372,6 @@ build_mapping_ui <- function(ns_prefix, missing_df, preset, tab_type) {
 
 # =============================================================================
 # HÀM THU GOM GIÁ TRỊ TỪ CÁC INPUT ĐỘNG (mapping cards)
-# Đọc toàn bộ input hiện tại, trả về data frame với các cột đã điền
 # =============================================================================
 
 collect_vsv_inputs <- function(input, missing_df, preset_vsv) {
@@ -393,7 +385,6 @@ collect_vsv_inputs <- function(input, missing_df, preset_vsv) {
     sel <- input[[paste0(id, "_sel")]]
     
     if (!is.null(sel) && sel != "" && sel != NOT_FOUND_LABEL) {
-      # Lấy từ preset: tự điền loai_vsv và ten_viet_tat
       row <- preset_vsv %>% filter(ten_vsv == sel)
       if (nrow(row) > 0) {
         result$ten_vsv[i]      <- row$ten_vsv[1]
@@ -401,7 +392,6 @@ collect_vsv_inputs <- function(input, missing_df, preset_vsv) {
         result$ten_viet_tat[i] <- row$ten_viet_tat[1]
       }
     } else if (!is.null(sel) && sel == NOT_FOUND_LABEL) {
-      # Lấy giá trị nhập tay
       result$ten_vsv[i]      <- input[[paste0(id, "_ten_vsv")]]      %||% ""
       result$loai_vsv[i]     <- input[[paste0(id, "_loai_vsv")]]     %||% ""
       result$ten_viet_tat[i] <- input[[paste0(id, "_ten_viet_tat")]] %||% ""
@@ -444,8 +434,8 @@ collect_bp_inputs <- function(input, missing_df) {
   result <- missing_df
   
   for (i in seq_len(n)) {
-    id      <- paste0("b_row_", i)
-    ten_bp  <- input[[paste0(id, "_ten_bp")]] %||% ""
+    id       <- paste0("b_row_", i)
+    ten_bp   <- input[[paste0(id, "_ten_bp")]] %||% ""
     nhom_sel <- input[[paste0(id, "_nhom_sel")]]
     
     nhom_val <- if (!is.null(nhom_sel) && nhom_sel == NOT_FOUND_LABEL) {
@@ -467,7 +457,6 @@ collect_bp_inputs <- function(input, missing_df) {
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Chuẩn hóa tên cột: NFC + trim + thay "." bằng khoảng trắng
-# openxlsx tự đổi dấu cách thành "." khi đọc, hàm này đảo ngược lại
 normalize_colnames <- function(x) {
   x <- stringi::stri_trans_nfc(stringi::stri_trim_both(x))
   gsub("[.]", " ", x)
@@ -688,8 +677,6 @@ server <- function(input, output, session) {
   # PRESET — dùng chung cho tất cả tab
   # ---------------------------------------------------------------------------
   
-  # Đọc preset một lần khi app khởi động từ đường dẫn tương đối
-  # File danh_muc.xlsx phải nằm cùng thư mục gốc project (cạnh app_danh_muc.R)
   preset_data <- local({
     path <- here::here("danh_muc.xlsx")
     p    <- load_preset(path)
@@ -797,8 +784,6 @@ server <- function(input, output, session) {
     df <- v_missing_df()
     if (is.null(df)) return(NULL)
     
-    p <- preset_data
-    
     tags$details(
       open = TRUE,
       tags$summary(
@@ -806,7 +791,7 @@ server <- function(input, output, session) {
         span(class = "badge", nrow(df))
       ),
       br(),
-      build_mapping_ui("v", df, p, "vsv")
+      build_mapping_ui("v", df, preset_data, "vsv")
     )
   })
   
@@ -817,8 +802,7 @@ server <- function(input, output, session) {
     miss <- v_missing_df()
     if (is.null(miss) || nrow(miss) == 0) return(work)
     
-    p <- preset_data
-    to_apply  <- collect_vsv_inputs(input, miss, p$vsv) %>%
+    to_apply <- collect_vsv_inputs(input, miss, preset_data$vsv) %>%
       filter(trimws(ten_vsv) != "")
     
     for (i in seq_len(nrow(to_apply))) {
@@ -874,7 +858,10 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1") 
+      
+      # writexl: luôn tạo sheet "Sheet1" theo mặc định → khớp Power Query
+      writexl::write_xlsx(out_clean, path = path)
+      
       v_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       v_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))
@@ -931,7 +918,6 @@ server <- function(input, output, session) {
                      error = function(e) NULL)
       if (is.null(df)) return(NULL)
       names(df) <- normalize_colnames(names(df))
-      # Chấp nhận cả tên cột tiếng Anh (Location) và tiếng Việt (Vùng)
       loc_col <- if ("Location" %in% names(df)) "Location" else if ("Vùng" %in% names(df)) "Vùng" else NA
       if (is.na(loc_col)) return(NULL)
       df %>% transmute(ma_hoa = as.character(.data[[loc_col]]))
@@ -985,8 +971,6 @@ server <- function(input, output, session) {
     df <- k_missing_df()
     if (is.null(df)) return(NULL)
     
-    p <- preset_data
-    
     tags$details(
       open = TRUE,
       tags$summary(
@@ -994,7 +978,7 @@ server <- function(input, output, session) {
         span(class = "badge", nrow(df))
       ),
       br(),
-      build_mapping_ui("k", df, p, "khoa")
+      build_mapping_ui("k", df, preset_data, "khoa")
     )
   })
   
@@ -1059,7 +1043,10 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_khoa, ten_khoa_nhom)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1")
+      
+      # writexl: luôn tạo sheet "Sheet1" theo mặc định → khớp Power Query
+      writexl::write_xlsx(out_clean, path = path)
+      
       k_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       k_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))
@@ -1169,8 +1156,6 @@ server <- function(input, output, session) {
     df <- b_missing_df()
     if (is.null(df)) return(NULL)
     
-    p <- preset_data
-    
     tags$details(
       open = TRUE,
       tags$summary(
@@ -1178,7 +1163,7 @@ server <- function(input, output, session) {
         span(class = "badge", nrow(df))
       ),
       br(),
-      build_mapping_ui("b", df, p, "bp")
+      build_mapping_ui("b", df, preset_data, "bp")
     )
   })
   
@@ -1243,7 +1228,10 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_benh_pham, ten_benh_pham_nhom)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1")
+      
+      # writexl: luôn tạo sheet "Sheet1" theo mặc định → khớp Power Query
+      writexl::write_xlsx(out_clean, path = path)
+      
       b_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       b_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))

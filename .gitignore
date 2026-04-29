@@ -1,11 +1,11 @@
 # RStudio project user state & cache
-*.Rproj.user/
-.Rhistory
-.RData
-.Rproj.user
+**/.Rhistory
+**/.RData
+**/Rproj.user/
 
 # renv
-renv/library/
-renv/sandbox/
-renv/staging/
-renv/.cache/
+**/renv/library/
+**/renv/sandbox/
+**/renv/staging/
+**/renv/.cache/
+.Rproj.user
