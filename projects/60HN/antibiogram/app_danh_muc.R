@@ -874,7 +874,7 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_vsv, loai_vsv, ten_viet_tat)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE)
+      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1") 
       v_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       v_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))
@@ -1059,7 +1059,7 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_khoa, ten_khoa_nhom)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE)
+      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1")
       k_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       k_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))
@@ -1243,7 +1243,7 @@ server <- function(input, output, session) {
     
     tryCatch({
       out_clean <- out %>% select(ma_hoa, ten_benh_pham, ten_benh_pham_nhom)
-      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE)
+      openxlsx::write.xlsx(out_clean, file = path, overwrite = TRUE, sheetName = "Sheet1")
       b_save_message(paste0("✅ Đã lưu thành công: ", path))
     }, error = function(e) {
       b_save_message(paste0("❌ Lỗi khi ghi file: ", e$message))
