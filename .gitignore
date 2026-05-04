@@ -33,9 +33,9 @@
 *.mdb
 
 # Statistical software formats
-*.sav        # SPSS
-*.dta        # Stata
-*.sas7bdat   # SAS
+*.sav
+*.dta   
+*.sas7bdat
 
 # R binary objects (may contain raw patient data)
 *.rds
